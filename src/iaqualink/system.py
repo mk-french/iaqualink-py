@@ -5,6 +5,8 @@ import time
 from typing import TYPE_CHECKING, Dict, Optional
 
 import aiohttp
+import asyncio
+import threading
 
 from iaqualink.const import (
     AQUALINK_COMMAND_SET_AUX,
@@ -12,11 +14,15 @@ from iaqualink.const import (
     AQUALINK_COMMAND_SET_TEMPS,
 )
 from iaqualink.device import AqualinkDevice
+from iaqualink.device import eXODevice
+from iaqualink.device import AqualinkState
 from iaqualink.exception import (
     AqualinkServiceException,
     AqualinkSystemOfflineException,
 )
 from iaqualink.typing import Payload
+
+from iaqualink.shadow import Shadow
 
 if TYPE_CHECKING:
     from iaqualink.client import AqualinkClient
@@ -57,7 +63,7 @@ class AqualinkSystem:
     def from_data(
         cls, aqualink: AqualinkClient, data: Payload
     ) -> Optional[AqualinkSystem]:
-        SYSTEM_TYPES = {"iaqua": AqualinkPoolSystem}
+        SYSTEM_TYPES = {"iaqua": AqualinkPoolSystem, "exo": eXOChlorinator}
 
         class_ = SYSTEM_TYPES.get(data["device_type"])
 
@@ -69,11 +75,14 @@ class AqualinkSystem:
 
         return class_(aqualink, data)
 
+
+
+class AqualinkPoolSystem(AqualinkSystem):
     async def get_devices(self) -> Dict[str, AqualinkDevice]:
         if not self.devices:
             await self.update()
         return self.devices
-
+    
     async def update(self) -> None:
         # Be nice to Aqualink servers since we rely on polling.
         now = int(time.time())
@@ -160,7 +169,7 @@ class AqualinkSystem:
                     self.devices[k].data[dk] = dv
             else:
                 self.devices[k] = AqualinkDevice.from_data(self, v)
-
+        
     async def set_pump(self, command: str) -> None:
         r = await self.aqualink._send_session_request(self.serial, command)
         await self._parse_home_response(r)
@@ -185,7 +194,71 @@ class AqualinkSystem:
             self.serial, AQUALINK_COMMAND_SET_LIGHT, data
         )
         await self._parse_devices_response(r)
+    
 
+class eXOChlorinator(AqualinkSystem):
+    def __init__(self, aqualink: AqualinkClient, data: Payload):
+        super().__init__(aqualink, data)
 
-class AqualinkPoolSystem(AqualinkSystem):
-    pass
+        credentials = {'access_key_id': self.aqualink._access_key_id,
+                        'secret_access_key': self.aqualink._secret_access_key,
+                        'session_token': self.aqualink._session_token,
+                        'signing_region': self.aqualink._signing_region,
+                        'client_id': self.aqualink._appClientId+"_py"}
+        # create a AWS IOT shadow client
+        self.shadow = Shadow(end_point=self.aqualink._end_point, thing_name=self.serial, credentials=credentials)
+
+    async def get_devices(self) -> Dict[str, AqualinkDevice]:
+        #if there are no devices, need to create them from the equipment/swc_0 property
+        if not self.devices:
+            #connect the shadow client
+            await asyncio.to_thread(self.shadow.connect) #shadow is not asyncio so send connect to a new thread to avoid blocking
+            #TODO: alternatively shadow can become async and we can asyncio.wrap_future()
+            
+            while not self.shadow.inital_state: #wait for initial state
+                print("Waiting for initial state...")
+                await asyncio.sleep(1)
+                #TODO: build a timeout here for failures
+            
+            # Process Chlorinator Properties
+            equipment = self.shadow.reported['equipment']['swc_0']
+            for name, data in equipment.items():
+                device = eXODevice.from_data(self, name, data)
+                if device: #if a device was created - this is how undesired properties of swc_0 are ignored
+                    self.devices[name] = device
+            
+            # Process Others
+            equipment = self.shadow.reported
+            for name, data in equipment.items():
+                device = eXODevice.from_data(self, name, data)
+                if device: 
+                    self.devices[name] = device
+        return self.devices
+
+    async def update(self) -> None:
+        #TODO: this is doing nothing.... remove or revise
+        now = int(time.time())
+        delta = now - self.last_refresh
+        if delta < MIN_SECS_TO_REFRESH:
+            LOGGER.debug(f"Only {delta}s since last refresh.")
+            return
+
+        self.online = True
+        self.last_refresh = int(time.time())
+        
+
+    async def set_pump(self, command: str) -> None:
+        raise NotImplementedError()
+
+    async def set_heater(self, state: int) -> None:
+        desired_state = {"heating":{"enabled":state}}
+        self.shadow.change_shadow_state(desired_state)
+
+    async def set_temps(self, temps: Payload) -> None:
+        raise NotImplementedError()
+
+    async def set_aux(self, aux: str) -> None:
+        raise NotImplementedError()
+
+    async def set_light(self, data: Payload) -> None:
+        raise NotImplementedError()

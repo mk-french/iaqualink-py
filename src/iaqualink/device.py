@@ -24,6 +24,11 @@ class AqualinkState(Enum):
     ON = "1"
     ENABLED = "3"
 
+@unique
+class eXOState(Enum):
+    OFF = 0
+    ON = 1
+    ENABLED = 3
 
 @dataclass
 class AqualinkLightType:
@@ -220,8 +225,61 @@ class AqualinkDevice:
 
         return class_(system, data)
 
+class eXODevice(AqualinkDevice):
+    def __init__(self, system: AqualinkSystem, name, data: DeviceData):
+        self.system = system
+        self._name = name
+        self.data = data
+
+    def __repr__(self) -> str:
+        attrs = ["name", "data"]
+        attrs = ["%s=%r" % (i, getattr(self, i)) for i in attrs]
+        return f'{self.__class__.__name__}({", ".join(attrs)})'
+
+    @property
+    def label(self) -> str:
+        if type(self.data) is dict and "sensor_type" in self.data:
+            with self.data["sensor_type"].lock:
+                label = self.data["sensor_type"].value
+            return " ".join([x.capitalize() for x in label.split()])
+
+        label = self.name
+        return " ".join([x.capitalize() for x in label.split("_")])
+
+    @property
+    def state(self) -> str:
+        with self.data["state"].lock:
+            return self.data["state"].value
+    
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @classmethod
+    def from_data(
+        cls, system: AqualinkSystem, name, data: DeviceData
+    ) -> AqualinkDevice:
+        class_: Type[AqualinkDevice]
+
+        if name == "sns_3": #Water Temp
+            class_ = eXOAnalogSensor
+        elif name == "swc": #Chlorinator setpoint
+            class_ = eXOSimpleAnalogSensor
+        elif name == "production": #Chlorinator running
+            class_ = eXOBinarySensor
+        elif name == "heating": #Heater Control TODO: extend heater control to include setpoints.
+            class_ = eXOHeater
+        else:
+            class_ = None
+
+        return class_(system, name, data) if class_ else None
+    
+
 
 class AqualinkSensor(AqualinkDevice):
+    pass
+
+class eXOSensor(eXODevice):
     pass
 
 
@@ -237,8 +295,77 @@ class AqualinkBinarySensor(AqualinkSensor):
             else False
         )
 
+class eXOBinarySensor(eXOSensor):
+    """These are non-actionable sensors, essentially read-only on/off."""
+
+    @property
+    def state(self) -> str:
+        with self.data.lock:
+            return self.data.value
+
+    @property
+    def is_on(self) -> bool:
+        return (
+            eXOState(self.state)
+            in [eXOState.ON, eXOState.ENABLED]
+            if self.state
+            else False
+        )
+
+class eXOAnalogSensor(eXOSensor):
+    """These are non-actionable sensors, essentially read-only value."""
+    
+    @property
+    def sensor_type(self) -> str:
+        with self.data['sensor_type'].lock:
+            return self.data['sensor_type'].value
+    
+    @property
+    def state(self) -> str:
+        return self.value
+
+    @property
+    def value(self) -> int:
+        with self.data['value'].lock:
+            return self.data['value'].value
+
+class eXOSimpleAnalogSensor(eXOSensor):
+
+    @property
+    def sensor_type(self) -> str:
+        return "Chlorinator"
+    
+    @property
+    def state(self) -> str:
+        return self.value
+
+    @property
+    def value(self) -> int:
+        with self.data.lock:
+            return self.data.value
 
 class AqualinkToggle(AqualinkDevice):
+    @property
+    def is_on(self) -> bool:
+        return (
+            AqualinkState(self.state)
+            in [AqualinkState.ON, AqualinkState.ENABLED]
+            if self.state
+            else False
+        )
+
+    async def turn_on(self) -> None:
+        if not self.is_on:
+            await self.toggle()
+
+    async def turn_off(self) -> None:
+        if self.is_on:
+            await self.toggle()
+
+    async def toggle(self) -> None:
+        raise NotImplementedError()
+
+class eXOToggle(eXODevice):
     @property
     def is_on(self) -> bool:
         return (
@@ -268,6 +395,27 @@ class AqualinkPump(AqualinkToggle):
 class AqualinkHeater(AqualinkToggle):
     async def toggle(self) -> None:
         await self.system.set_heater(f"set_{self.name}")
+
+class eXOHeater(eXOToggle):
+    @property
+    def enabled(self) -> int:
+        with self.data['enabled'].lock:
+            return self.data['enabled'].value
+    
+    @property
+    def is_on(self) -> bool:
+        return (
+            eXOState(self.enabled)
+            in [eXOState.ON, eXOState.ENABLED]
+            if self.enabled
+            else False
+        )
+
+    async def turn_on(self) -> None:
+        await self.system.set_heater(eXOState.ON.value)
+
+    async def turn_off(self) -> None:
+        await self.system.set_heater(eXOState.OFF.value)
 
 
 class AqualinkAuxToggle(AqualinkToggle):

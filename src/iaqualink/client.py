@@ -13,6 +13,7 @@ from iaqualink.const import (
     AQUALINK_DEVICES_URL,
     AQUALINK_LOGIN_URL,
     AQUALINK_SESSION_URL,
+    AWSIOT_ENDPOINT,
 )
 from iaqualink.exception import (
     AqualinkServiceException,
@@ -51,6 +52,13 @@ class AqualinkClient:
         self._session_id = ""
         self._token = ""
         self._user_id = ""
+        #AWS Tokens
+        self._appClientId = ""
+        self._access_key_id = ""
+        self._secret_access_key = ""
+        self._session_token = ""
+        self._signing_region = ""
+        self._endpoint = ""
 
         self._last_refresh = 0
 
@@ -130,9 +138,16 @@ class AqualinkClient:
         r = await self._send_login_request()
 
         data = await r.json()
+        LOGGER.debug(f"Client response: {data}")
         self._session_id = data["session_id"]
         self._token = data["authentication_token"]
         self._user_id = data["id"]
+        self._appClientId = data["cognitoPool"]["appClientId"]
+        self._access_key_id = data["credentials"]["AccessKeyId"]
+        self._secret_access_key = data["credentials"]["SecretKey"]
+        self._session_token = data["credentials"]["SessionToken"]
+        self._signing_region = data["cognitoPool"]["region"]
+        self._end_point = AWSIOT_ENDPOINT
         self._logged = True
 
     async def _send_systems_request(self) -> aiohttp.ClientResponse:
