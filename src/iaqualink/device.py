@@ -192,6 +192,10 @@ class AqualinkDevice:
     def name(self) -> str:
         return self.data["name"]
 
+    @property
+    def serial(self) -> str:
+        return self.system.serial
+
     @classmethod
     def from_data(
         cls, system: AqualinkSystem, data: DeviceData
@@ -202,7 +206,7 @@ class AqualinkDevice:
             class_ = AqualinkHeater
         elif data["name"].endswith("_set_point"):
             class_ = AqualinkThermostat
-        elif data["name"].endswith("_pump"):
+        elif data["name"].endswith("_pump") and system.data["device_type"] != "exo":
             class_ = AqualinkPump
         elif data["name"] == "freeze_protection":
             class_ = AqualinkBinarySensor
@@ -211,10 +215,24 @@ class AqualinkDevice:
                 class_ = AqualinkColorLight
             elif data["type"] == "1":
                 class_ = AqualinkDimmableLight
-            elif "LIGHT" in data["label"]:
+            elif "label" in data and "LIGHT" in data["label"]:
                 class_ = AqualinkLightToggle
+            elif system.data["device_type"] == "exo":
+                class_ = eXOAuxToggle
             else:
                 class_ = AqualinkAuxToggle
+        elif data["name"].startswith("sns_"):
+            class_ = eXOSensor
+        elif data["name"] == "heating":
+            class_ = eXOThermostat
+        elif data["name"] == "production":
+            class_ = eXOProduction
+        elif data["name"] == "boost":
+            class_ = eXOBoost
+        elif data["name"] == "low":
+            class_ = eXOLow
+        elif data["name"] == "filter_pump":
+            class_ = AqualinkBinarySensor
         else:
             class_ = AqualinkSensor
 
@@ -225,13 +243,19 @@ class AqualinkSensor(AqualinkDevice):
     pass
 
 
+class eXOSensor(AqualinkSensor):
+    @property
+    def state(self) -> str:
+        return self.data["value"]
+
+
 class AqualinkBinarySensor(AqualinkSensor):
     """These are non-actionable sensors, essentially read-only on/off."""
 
     @property
     def is_on(self) -> bool:
         return (
-            AqualinkState(self.state)
+            AqualinkState(str(self.state))
             in [AqualinkState.ON, AqualinkState.ENABLED]
             if self.state
             else False
@@ -242,7 +266,7 @@ class AqualinkToggle(AqualinkDevice):
     @property
     def is_on(self) -> bool:
         return (
-            AqualinkState(self.state)
+            AqualinkState(str(self.state))
             in [AqualinkState.ON, AqualinkState.ENABLED]
             if self.state
             else False
@@ -273,6 +297,54 @@ class AqualinkHeater(AqualinkToggle):
 class AqualinkAuxToggle(AqualinkToggle):
     async def toggle(self) -> None:
         await self.system.set_aux(self.data["aux"])
+
+
+class eXOAuxToggle(AqualinkToggle):
+    async def turn_on(self) -> None:
+        if not self.is_on:
+            self.data["state"] = 1
+            await self.system.set_aux(self.name, 1)
+
+    async def turn_off(self) -> None:
+        if self.is_on:
+            self.data["state"] = 0
+            await self.system.set_aux(self.name, 0)
+
+
+class eXOProduction(AqualinkToggle):
+    async def turn_on(self) -> None:
+        if not self.is_on:
+            self.data["state"] = 1
+            await self.system.set_production(1)
+
+    async def turn_off(self) -> None:
+        if self.is_on:
+            self.data["state"] = 0
+            await self.system.set_production(0)
+
+
+class eXOBoost(AqualinkToggle):
+    async def turn_on(self) -> None:
+        if not self.is_on:
+            self.data["state"] = 1
+            await self.system.set_boost(1)
+
+    async def turn_off(self) -> None:
+        if self.is_on:
+            self.data["state"] = 0
+            await self.system.set_boost(0)
+
+
+class eXOLow(AqualinkToggle):
+    async def turn_on(self) -> None:
+        if not self.is_on:
+            self.data["state"] = 1
+            await self.system.set_low(1)
+
+    async def turn_off(self) -> None:
+        if self.is_on:
+            self.data["state"] = 0
+            await self.system.set_low(0)
 
 
 # Using AqualinkLight as a Mixin so we can use isinstance(dev, AqualinkLight).
@@ -401,17 +473,30 @@ class AqualinkThermostat(AqualinkDevice):
         if self.name.startswith("pool") and self.system.has_spa:
             return "temp2"
         return "temp1"
-
-    async def set_temperature(self, temperature: int) -> None:
+    
+    @property
+    def minimum(self) -> int:
         unit = self.system.temp_unit
 
         if unit == "F":
-            low = AQUALINK_TEMP_FAHRENHEIT_LOW
-            high = AQUALINK_TEMP_FAHRENHEIT_HIGH
+            return AQUALINK_TEMP_FAHRENHEIT_LOW
         else:
-            low = AQUALINK_TEMP_CELSIUS_LOW
-            high = AQUALINK_TEMP_CELSIUS_HIGH
+            return AQUALINK_TEMP_CELSIUS_LOW
+    
+    @property
+    def maximum(self) -> int:
+        unit = self.system.temp_unit
 
+        if unit == "F":
+            return AQUALINK_TEMP_FAHRENHEIT_HIGH
+        else:
+            return AQUALINK_TEMP_CELSIUS_HIGH
+
+
+    async def set_temperature(self, temperature: int) -> None:
+        low = self.minimum
+        high = self.maximum
+        unit = unit = self.system.temp_unit
         if temperature not in range(low, high + 1):
             msg = f"{temperature}{unit} isn't a valid temperature"
             msg += f" ({low}-{high}{unit})."
@@ -419,3 +504,35 @@ class AqualinkThermostat(AqualinkDevice):
 
         data = {self.temp: str(temperature)}
         await self.system.set_temps(data)
+
+class eXOThermostat(AqualinkThermostat):
+    
+    @property
+    def minimum(self) -> int:
+        return self.data["sp_min"]
+    
+    @property
+    def maximum(self) -> int:
+        return self.data["sp_max"]
+
+    @property
+    def setpoint(self) -> int:
+        return self.data["sp"]
+
+    async def turn_on(self) -> None:
+        await self.system.set_heater(1)
+
+    async def turn_off(self) -> None:
+        data = {"heating": {"enabled": 0}}
+        await self.system.set_heater(0)
+
+    async def set_temperature(self, temperature: int) -> None:
+        low = self.minimum
+        high = self.maximum
+        unit = unit = self.system.temp_unit
+        if temperature not in range(low, high + 1):
+            msg = f"{temperature}{unit} isn't a valid temperature"
+            msg += f" ({low}-{high}{unit})."
+            raise Exception(msg)
+
+        await self.system.set_temps(temperature)

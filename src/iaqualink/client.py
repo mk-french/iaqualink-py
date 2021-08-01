@@ -13,6 +13,9 @@ from iaqualink.const import (
     AQUALINK_DEVICES_URL,
     AQUALINK_LOGIN_URL,
     AQUALINK_SESSION_URL,
+    AQUALINK_COMMAND_GET_SHADOW,
+    AQUALINK_COMMAND_SET_SHADOW,
+    AQUALINK_AWSDEVICES_URL,
 )
 from iaqualink.exception import (
     AqualinkServiceException,
@@ -50,6 +53,7 @@ class AqualinkClient:
         self._session_id = ""
         self._token = ""
         self._user_id = ""
+        self._IdToken = ""
 
         self._last_refresh = 0
 
@@ -91,15 +95,20 @@ class AqualinkClient:
         self,
         url: str,
         method: str = "get",
+        headers: dict = {},
         **kwargs: Optional[Dict[str, Any]],
     ) -> aiohttp.ClientResponse:
         # One-time instantiation if we weren't given a session.
         if self._session is None:
             self._session = aiohttp.ClientSession()
+        
+        # Add any additional headers supplied
+        _headers = dict(AQUALINK_HTTP_HEADERS)
+        _headers.update(headers)
 
-        LOGGER.debug(f"-> {method.upper()} {url} {kwargs}")
+        LOGGER.debug(f"-> {method.upper()} {url} {_headers} {kwargs}")
         r = await self._session.request(
-            method, url, headers=AQUALINK_HTTP_HEADERS, **kwargs
+            method, url, headers=_headers, **kwargs
         )
 
         LOGGER.debug(f"<- {r.status} {r.reason} - {url}")
@@ -132,6 +141,7 @@ class AqualinkClient:
         self._session_id = data["session_id"]
         self._token = data["authentication_token"]
         self._user_id = data["id"]
+        self._IdToken = data["userPoolOAuth"]["IdToken"]
         self._logged = True
 
     async def _send_systems_request(self) -> aiohttp.ClientResponse:
@@ -188,5 +198,33 @@ class AqualinkClient:
     ) -> aiohttp.ClientResponse:
         r = await self._send_session_request(
             serial, AQUALINK_COMMAND_GET_DEVICES
+        )
+        return r
+    
+    async def _send_aws_request(
+        self,
+        serial: str,
+        command: str,
+        **kwargs: Optional[Dict[str, Any]]
+    ) -> aiohttp.ClientResponse:
+
+        url = f"{AQUALINK_AWSDEVICES_URL}/{serial}/{command}"
+        return await self._send_request(url, headers={"authorization":self._IdToken}, **kwargs)
+
+    async def send_shadow_request(
+        self, serial: str
+    ) -> aiohttp.ClientResponse:
+        r = await self._send_aws_request(
+            serial, AQUALINK_COMMAND_GET_SHADOW
+        )
+        return r
+    
+    async def send_shadow_desired(
+        self, 
+        serial: str, 
+        state: Dict[str, Any]
+    ) -> aiohttp.ClientResponse:
+        r = await self._send_aws_request(
+            serial, AQUALINK_COMMAND_SET_SHADOW, method="post", json={"state": {"desired": state}}
         )
         return r
