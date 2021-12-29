@@ -10,6 +10,10 @@ from iaqualink.const import (
     AQUALINK_TEMP_CELSIUS_LOW,
     AQUALINK_TEMP_FAHRENHEIT_HIGH,
     AQUALINK_TEMP_FAHRENHEIT_LOW,
+    ZS500_TEMP_CELSIUS_HIGH,
+    ZS500_TEMP_CELSIUS_LOW,
+    ZS500_TEMP_FAHRENHEIT_HIGH,
+    ZS500_TEMP_FAHRENHEIT_LOW,
 )
 from iaqualink.exception import AqualinkInvalidParameterException
 from iaqualink.typing import DeviceData
@@ -221,8 +225,10 @@ class AqualinkDevice:
                 class_ = eXOAuxToggle
             else:
                 class_ = AqualinkAuxToggle
-        elif data["name"].startswith("sns_"):
+        elif data["name"].startswith("sns_") and system.data["device_type"] == "exo" :
             class_ = eXOSensor
+        elif data["name"].startswith("sns_") and system.data["device_type"] == "zs500" :
+            class_ = zs500Sensor
         elif data["name"] == "heating":
             class_ = eXOThermostat
         elif data["name"] == "production":
@@ -233,6 +239,8 @@ class AqualinkDevice:
             class_ = eXOLow
         elif data["name"] == "filter_pump":
             class_ = AqualinkBinarySensor
+        elif data["name"] == "state" and system.data["device_type"] == "zs500":
+            class_ = zs500Thermostat
         else:
             class_ = AqualinkSensor
 
@@ -247,6 +255,11 @@ class eXOSensor(AqualinkSensor):
     @property
     def state(self) -> str:
         return self.data["value"]
+
+class zs500Sensor(AqualinkSensor):
+    @property
+    def state(self) -> str:
+        return str(self.data["value"]/10)
 
 
 class AqualinkBinarySensor(AqualinkSensor):
@@ -516,7 +529,7 @@ class eXOThermostat(AqualinkThermostat):
         return self.data["sp_max"]
 
     @property
-    def setpoint(self) -> int:
+    def setpoint(self) -> float:
         return self.data["sp"]
 
     async def turn_on(self) -> None:
@@ -536,3 +549,46 @@ class eXOThermostat(AqualinkThermostat):
             raise Exception(msg)
 
         await self.system.set_temps(temperature)
+
+class zs500Thermostat(AqualinkThermostat):
+    
+    @property
+    def minimum(self) -> int:
+        unit = self.system.temp_unit
+
+        if unit == "F":
+            return ZS500_TEMP_FAHRENHEIT_LOW
+        else:
+            return ZS500_TEMP_CELSIUS_LOW
+    
+    @property
+    def maximum(self) -> int:
+        unit = self.system.temp_unit
+
+        if unit == "F":
+            return ZS500_TEMP_FAHRENHEIT_HIGH
+        else:
+            return ZS500_TEMP_CELSIUS_HIGH
+
+    @property
+    def setpoint(self) -> float:
+        return self.system.devices['tsp'].state/10
+
+    async def turn_on(self) -> None:
+        #await self.system.set_heater(1)
+        return
+
+    async def turn_off(self) -> None:
+        #await self.system.set_heater(0)
+        return
+
+    async def set_temperature(self, temperature: int) -> None:
+        low = self.minimum
+        high = self.maximum
+        unit = unit = self.system.temp_unit
+        if temperature not in range(low, high + 1):
+            msg = f"{temperature}{unit} isn't a valid temperature"
+            msg += f" ({low}-{high}{unit})."
+            raise Exception(msg)
+
+        #await self.system.set_temps(temperature)
