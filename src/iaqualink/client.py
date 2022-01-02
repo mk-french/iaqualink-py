@@ -4,22 +4,21 @@ import logging
 from types import TracebackType
 from typing import Any, Dict, Optional, Type
 
-import aiohttp
+import httpx
 
 from iaqualink.const import (
     AQUALINK_API_KEY,
-    AQUALINK_COMMAND_GET_DEVICES,
-    AQUALINK_COMMAND_GET_HOME,
     AQUALINK_DEVICES_URL,
     AQUALINK_LOGIN_URL,
-    AQUALINK_SESSION_URL,
+    KEEPALIVE_EXPIRY,
 )
 from iaqualink.exception import (
     AqualinkServiceException,
     AqualinkServiceUnauthorizedException,
+    AqualinkSystemUnsupportedException,
 )
 from iaqualink.system import AqualinkSystem
-from iaqualink.typing import Payload
+from iaqualink.systems import *  # pylint: disable=W0401,W0614 # noqa: F401,F403
 
 AQUALINK_HTTP_HEADERS = {
     "user-agent": "okhttp/3.14.7",
@@ -34,20 +33,22 @@ class AqualinkClient:
         self,
         username: str,
         password: str,
-        session: Optional[aiohttp.ClientSession] = None,
+        httpx_client: Optional[httpx.AsyncClient] = None,
     ):
         self._username = username
         self._password = password
         self._logged = False
 
-        if session is None:
-            self._session = None
-            self._must_clean_session = True
-        else:
-            self._session = session
-            self._must_clean_session = False
+        self._client: Optional[httpx.AsyncClient] = None
 
-        self._session_id = ""
+        if httpx_client is None:
+            self._client = None
+            self._must_close_client = True
+        else:
+            self._client = httpx_client
+            self._must_close_client = False
+
+        self.client_id = ""
         self._token = ""
         self._user_id = ""
 
@@ -58,16 +59,13 @@ class AqualinkClient:
         return self._logged
 
     async def close(self) -> None:
-        if self._must_clean_session is False or self.closed is True:
+        if self._must_close_client is False:
             return
 
         # There shouldn't be a case where this is None but this quietens mypy.
-        if self._session is not None:
-            await self._session.close()
-
-    @property
-    def closed(self) -> bool:
-        return self._session is None or self._session.closed is True
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def __aenter__(self) -> AqualinkClient:
         try:
@@ -87,54 +85,53 @@ class AqualinkClient:
         await self.close()
         return exc is None
 
-    async def _send_request(
-        self,
-        url: str,
-        method: str = "get",
-        **kwargs: Optional[Dict[str, Any]],
-    ) -> aiohttp.ClientResponse:
-        # One-time instantiation if we weren't given a session.
-        if self._session is None:
-            self._session = aiohttp.ClientSession()
+    async def send_request(
+        self, url: str, method: str = "get", **kwargs: Any
+    ) -> httpx.Response:
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                http2=True,
+                limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY),
+            )
 
         LOGGER.debug(f"-> {method.upper()} {url} {kwargs}")
-        r = await self._session.request(
+        r = await self._client.request(
             method, url, headers=AQUALINK_HTTP_HEADERS, **kwargs
         )
 
-        LOGGER.debug(f"<- {r.status} {r.reason} - {url}")
+        LOGGER.debug(f"<- {r.status_code} {r.reason_phrase} - {url}")
 
-        if r.status == 401:
+        if r.status_code == 401:
             m = "Unauthorized Access, check your credentials and try again"
             self._logged = False
             raise AqualinkServiceUnauthorizedException
 
-        if r.status != 200:
-            m = f"Unexpected response: {r.status} {r.reason}"
+        if r.status_code != 200:
+            m = f"Unexpected response: {r.status_code} {r.reason_phrase}"
             raise AqualinkServiceException(m)
 
         return r
 
-    async def _send_login_request(self) -> aiohttp.ClientResponse:
+    async def _send_login_request(self) -> httpx.Response:
         data = {
             "api_key": AQUALINK_API_KEY,
             "email": self._username,
             "password": self._password,
         }
-        return await self._send_request(
+        return await self.send_request(
             AQUALINK_LOGIN_URL, method="post", json=data
         )
 
     async def login(self) -> None:
         r = await self._send_login_request()
 
-        data = await r.json()
-        self._session_id = data["session_id"]
+        data = r.json()
+        self.client_id = data["session_id"]
         self._token = data["authentication_token"]
         self._user_id = data["id"]
         self._logged = True
 
-    async def _send_systems_request(self) -> aiohttp.ClientResponse:
+    async def _send_systems_request(self) -> httpx.Response:
         params = {
             "api_key": AQUALINK_API_KEY,
             "authentication_token": self._token,
@@ -142,7 +139,7 @@ class AqualinkClient:
         }
         params_str = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{AQUALINK_DEVICES_URL}?{params_str}"
-        return await self._send_request(url)
+        return await self.send_request(url)
 
     async def get_systems(self) -> Dict[str, AqualinkSystem]:
         try:
@@ -152,41 +149,13 @@ class AqualinkClient:
                 raise AqualinkServiceUnauthorizedException from e
             raise
 
-        data = await r.json()
-        systems = [AqualinkSystem.from_data(self, x) for x in data]
+        data = r.json()
+
+        systems = []
+        for x in data:
+            try:
+                systems += [AqualinkSystem.from_data(self, x)]
+            except AqualinkSystemUnsupportedException:
+                pass
+
         return {x.serial: x for x in systems if x is not None}
-
-    async def _send_session_request(
-        self,
-        serial: str,
-        command: str,
-        params: Optional[Payload] = None,
-    ) -> aiohttp.ClientResponse:
-        if not params:
-            params = {}
-
-        params.update(
-            {
-                "actionID": "command",
-                "command": command,
-                "serial": serial,
-                "sessionID": self._session_id,
-            }
-        )
-        params_str = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{AQUALINK_SESSION_URL}?{params_str}"
-        return await self._send_request(url)
-
-    async def send_home_screen_request(
-        self, serial: str
-    ) -> aiohttp.ClientResponse:
-        r = await self._send_session_request(serial, AQUALINK_COMMAND_GET_HOME)
-        return r
-
-    async def send_devices_screen_request(
-        self, serial: str
-    ) -> aiohttp.ClientResponse:
-        r = await self._send_session_request(
-            serial, AQUALINK_COMMAND_GET_DEVICES
-        )
-        return r
