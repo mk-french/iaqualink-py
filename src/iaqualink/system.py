@@ -236,20 +236,22 @@ class eXOChlorinator(AqualinkSystem):
         # Process the chlorinator attributes
         # Make the data a bit flatter.
         devices = {}
-        for name,state in data["state"]["reported"]["equipment"]["swc_0"].items():
-            attrs = {"name": name, "state": state}
-            try:
-                attrs.update(state)
-            except:
-                pass
-            devices.update({name: attrs})
-        devices.pop("vsp_speed", None) # temp remove until can handle dictionary
+        if ('swc_0' in data["state"]["reported"]["equipment"]):
+            for name,state in data["state"]["reported"]["equipment"]["swc_0"].items():
+                attrs = {"name": name, "state": state}
+                try:
+                    attrs.update(state)
+                except:
+                    pass
+                devices.update({name: attrs})
+            devices.pop("vsp_speed") # temp remove until can handle dictionary
 
-        # Process the heating control attributes
-        name = "heating"
-        attrs = {"name": name}
-        attrs.update(data["state"]["reported"]["heating"])
-        devices.update({name: attrs})
+        # Process the heating control attributes if they exist
+        if ('heating' in data["state"]["reported"]):
+            name = "heating"
+            attrs = {"name": name}
+            attrs.update(data["state"]["reported"]["heating"])
+            devices.update({name: attrs})
 
         LOGGER.debug(f"devices: {devices}")
 
