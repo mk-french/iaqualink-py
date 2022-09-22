@@ -244,7 +244,7 @@ class eXOChlorinator(AqualinkSystem):
                 except:
                     pass
                 devices.update({name: attrs})
-            devices.pop("vsp_speed") # temp remove until can handle dictionary
+            devices.pop("vsp_speed", None) # temp remove until can handle dictionary
 
         # Process the heating control attributes if they exist
         if ('heating' in data["state"]["reported"]):
