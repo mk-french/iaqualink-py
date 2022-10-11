@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from os import path
 from types import TracebackType
 from typing import Any, Dict, Optional, Type
 
 import aiohttp
+import asyncio
 
 from iaqualink.const import (
     AQUALINK_API_KEY,
@@ -13,9 +15,8 @@ from iaqualink.const import (
     AQUALINK_DEVICES_URL,
     AQUALINK_LOGIN_URL,
     AQUALINK_SESSION_URL,
-    AQUALINK_COMMAND_GET_SHADOW,
-    AQUALINK_COMMAND_SET_SHADOW,
-    AQUALINK_AWSDEVICES_URL,
+    AQUALINK_AWSENDPOINT,
+    AQUALINK_AWSMQTTPORT
 )
 from iaqualink.exception import (
     AqualinkServiceException,
@@ -24,6 +25,8 @@ from iaqualink.exception import (
 from iaqualink.system import AqualinkSystem
 from iaqualink.typing import Payload
 
+from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTShadowClient
+
 AQUALINK_HTTP_HEADERS = {
     "user-agent": "okhttp/3.14.7",
     "content-type": "application/json",
@@ -31,6 +34,7 @@ AQUALINK_HTTP_HEADERS = {
 
 LOGGER = logging.getLogger("iaqualink")
 
+CERTPATH = path.join(path.dirname(__file__), 'SFSRootCAG2.pem') # might not belong in src but good enough for now...
 
 class AqualinkClient:
     def __init__(
@@ -56,6 +60,9 @@ class AqualinkClient:
         self._IdToken = ""
 
         self._last_refresh = 0
+
+        self.MQTTShadowClient = None
+        self.MQTTSystems = set()
 
     @property
     def logged(self) -> bool:
@@ -142,6 +149,11 @@ class AqualinkClient:
         self._token = data["authentication_token"]
         self._user_id = data["id"]
         self._IdToken = data["userPoolOAuth"]["IdToken"]
+        self._appClientId = data["cognitoPool"]["appClientId"]
+        self._access_key_id = data["credentials"]["AccessKeyId"]
+        self._secret_access_key = data["credentials"]["SecretKey"]
+        self._session_token = data["credentials"]["SessionToken"]
+
         self._logged = True
 
     async def _send_systems_request(self) -> aiohttp.ClientResponse:
@@ -200,31 +212,49 @@ class AqualinkClient:
             serial, AQUALINK_COMMAND_GET_DEVICES
         )
         return r
-    
-    async def _send_aws_request(
-        self,
-        serial: str,
-        command: str,
-        **kwargs: Optional[Dict[str, Any]]
-    ) -> aiohttp.ClientResponse:
 
-        url = f"{AQUALINK_AWSDEVICES_URL}/{serial}/{command}"
-        return await self._send_request(url, headers={"authorization":self._IdToken}, **kwargs)
+    def init_MQTT_client(self, system):
+        
+        # Register the calling system for any future actions required (eg. disconnection flagging)
+        self.MQTTSystems.add(system)
 
-    async def send_shadow_request(
-        self, serial: str
-    ) -> aiohttp.ClientResponse:
-        r = await self._send_aws_request(
-            serial, AQUALINK_COMMAND_GET_SHADOW
-        )
-        return r
-    
-    async def send_shadow_desired(
-        self, 
-        serial: str, 
-        state: Dict[str, Any]
-    ) -> aiohttp.ClientResponse:
-        r = await self._send_aws_request(
-            serial, AQUALINK_COMMAND_SET_SHADOW, method="post", json={"state": {"desired": state}}
-        )
-        return r
+        # If a client already exists nothing to do
+        if self.MQTTShadowClient is not None:
+            return
+
+        # note the event loop so we can refer to it in threaded callbacks used by
+        self.main_event_loop = asyncio.get_running_loop()
+        
+        # set up the MQTT shadow client
+        self.MQTTShadowClient = AWSIoTMQTTShadowClient(self._appClientId, useWebsocket=True)
+        self.MQTTShadowClient.configureEndpoint(AQUALINK_AWSENDPOINT, AQUALINK_AWSMQTTPORT)
+        self.MQTTShadowClient.configureCredentials(CERTPATH)
+        self.MQTTShadowClient.configureIAMCredentials(self._access_key_id, self._secret_access_key, self._session_token)
+
+        # If the client is dissconnected, try re-initialising the client with new tokens
+        self.MQTTShadowClient.onOffline = self.MQTT_client_onOffline
+
+        # Time configurations
+        self.MQTTShadowClient.configureAutoReconnectBackoffTime(1, 32, 20)
+        self.MQTTShadowClient.configureConnectDisconnectTimeout(10)  # 10 sec
+        self.MQTTShadowClient.configureMQTTOperationTimeout(10)  # 10 sec
+
+        # Connect to AWS IoT
+        self.MQTTShadowClient.connect()
+
+    def MQTT_client_onOffline(self):
+        # This function will be called if the MQTT client is disconnected
+        LOGGER.debug(f"MQTT Client disconnected...")
+        # Flag all the systems as disconnected - if they come back they will be marked online by update() or similar
+        for MQTTSystem in self.MQTTSystems:
+            MQTTSystem.online = False
+
+        # Likely expired tokens, try get some new ones...
+        self.reinit_MQTT_client()
+
+    def reinit_MQTT_client(self):
+        LOGGER.debug(f"Getting new tokens!")
+        # retrieve new tokens - login() is an async function so run it on the event loop, here we should be on a seperate loopless thread.
+        asyncio.run_coroutine_threadsafe(self.login(), self.main_event_loop).result()
+        # update the tokens in the MQTT client
+        self.MQTTShadowClient.configureIAMCredentials(self._access_key_id, self._secret_access_key, self._session_token)

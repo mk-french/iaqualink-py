@@ -5,7 +5,7 @@ from setuptools import setup
 with open("README.md") as readme_file:
     readme = readme_file.read()
 
-requirements = ["aiohttp"]
+requirements = ["aiohttp", "AWSIoTPythonSDK"]
 
 setup_requirements = ["pytest-runner"]
 
@@ -17,7 +17,7 @@ test_requirements = [
 
 setup(
     name="iaqualink",
-    version="0.5.3",
+    version="0.6.0",
     description="Asynchronous library for Jandy iAqualink",
     long_description=readme,
     long_description_content_type="text/markdown",

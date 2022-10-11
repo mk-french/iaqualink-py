@@ -1,1 +1,2 @@
 include LICENSE
+include src/iaqualink/SFSRootCAG2.pem

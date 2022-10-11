@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 class AqualinkState(Enum):
     OFF = "0"
     ON = "1"
+    STANDBY = "2"
     ENABLED = "3"
 
 
@@ -519,7 +520,10 @@ class AqualinkThermostat(AqualinkDevice):
         await self.system.set_temps(data)
 
 class eXOThermostat(AqualinkThermostat):
-    
+    @property
+    def mode(self) -> int:
+        return self.data["enabled"]
+
     @property
     def minimum(self) -> int:
         return self.data["sp_min"]
@@ -536,7 +540,6 @@ class eXOThermostat(AqualinkThermostat):
         await self.system.set_heater(1)
 
     async def turn_off(self) -> None:
-        data = {"heating": {"enabled": 0}}
         await self.system.set_heater(0)
 
     async def set_temperature(self, temperature: int) -> None:

@@ -5,7 +5,8 @@ AQUALINK_API_KEY = "EOOEMOW4YR6QNB07"
 AQUALINK_LOGIN_URL = "https://prod.zodiac-io.com/users/v1/login"
 AQUALINK_DEVICES_URL = "https://r-api.iaqualink.net/devices.json"
 AQUALINK_SESSION_URL = "https://p-api.iaqualink.net/v1/mobile/session.json"
-AQUALINK_AWSDEVICES_URL = "https://prod.zodiac-io.com/devices/v1"
+AQUALINK_AWSENDPOINT = "a1zi08qpbrtjyq-ats.iot.us-east-1.amazonaws.com"
+AQUALINK_AWSMQTTPORT = 443
 
 AQUALINK_COMMAND_GET_DEVICES = "get_devices"
 AQUALINK_COMMAND_GET_HOME = "get_home"
@@ -18,9 +19,6 @@ AQUALINK_COMMAND_SET_SOLAR_HEATER = "set_solar_heater"
 AQUALINK_COMMAND_SET_SPA_HEATER = "set_spa_heater"
 AQUALINK_COMMAND_SET_SPA_PUMP = "set_spa_pump"
 AQUALINK_COMMAND_SET_TEMPS = "set_temps"
-
-AQUALINK_COMMAND_GET_SHADOW = "shadow"
-AQUALINK_COMMAND_SET_SHADOW = "shadow"
 
 AQUALINK_TEMP_CELSIUS_LOW = 1
 AQUALINK_TEMP_CELSIUS_HIGH = 40

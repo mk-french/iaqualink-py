@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import asyncio
 from typing import TYPE_CHECKING, Dict, Optional
 
 import aiohttp
@@ -22,6 +23,7 @@ from iaqualink.typing import Payload
 if TYPE_CHECKING:
     from iaqualink.client import AqualinkClient
 
+from iaqualink.shadow import Shadow
 
 MIN_SECS_TO_REFRESH = 15
 
@@ -187,12 +189,17 @@ class AqualinkPoolSystem(AqualinkSystem):
             self.serial, AQUALINK_COMMAND_SET_LIGHT, data
         )
         await self._parse_devices_response(r)
-
-class eXOChlorinator(AqualinkSystem):
+    
+class AWSSystem(AqualinkSystem):
     def __init__(self, aqualink: AqualinkClient, data: Payload):
         super().__init__(aqualink, data)
 
         self.temp_unit = "C" #TODO: check if unit can be changed on panel?
+        
+        # Initialise the (possibly shared) MQTT Client with a reference back to this system
+        aqualink.init_MQTT_client(self)
+        # Create a shadow handler for this system with a reference back to this system
+        self.shadow = Shadow(self)
 
     async def update(self) -> None:
         # Be nice to Aqualink servers since we rely on polling.
@@ -201,37 +208,16 @@ class eXOChlorinator(AqualinkSystem):
         if delta < MIN_SECS_TO_REFRESH:
             LOGGER.debug(f"Only {delta}s since last refresh.")
             return
+        
+        # Retrieve and wait for the shadow & processing
+        await self.shadow.get()
 
-        try:
-            r1 = await self.aqualink.send_shadow_request(self.serial)
-        # catch if a new AWS token is required
-        except AqualinkServiceUnauthorizedException:
-            try:
-                await self.aqualink.login()
-                r1 = await self.aqualink.send_shadow_request(self.serial)
-            except AqualinkServiceException:
-                self.online = None
-                raise
-        except AqualinkServiceException:
-            self.online = None
-            raise
-
-
-        try:
-            await self._parse_shadow_response(r1)
-        except AqualinkSystemOfflineException:
-            self.online = False
-            raise
+class eXOChlorinator(AWSSystem):
+    def parse_shadow_response(self, data):
+        LOGGER.debug(f"Shadow response: {data}")
 
         self.online = True
         self.last_refresh = int(time.time())
-    
-    async def _parse_shadow_response(
-        self, response: aiohttp.ClientResponse
-    ) -> None:
-        data = await response.json()
-
-        LOGGER.debug(f"Shadow response: {data}")
 
         # Process the chlorinator attributes
         # Make the data a bit flatter.
@@ -263,73 +249,30 @@ class eXOChlorinator(AqualinkSystem):
                 self.devices[k] = AqualinkDevice.from_data(self, v)
 
     async def set_heater(self, state) -> None:
-        r = await self.aqualink.send_shadow_desired(self.serial, {"heating": {"enabled": state}})
-        r.raise_for_status()
+        await self.shadow.update({"heating": {"enabled": state}})
 
     async def set_temps(self, sp) -> None:
-        r = await self.aqualink.send_shadow_desired(self.serial, {"heating": {"sp": sp}})
-        r.raise_for_status()
+        await self.shadow.update({"heating": {"sp": sp}})
 
     async def set_aux(self, aux, state) -> None:
-        r = await self.aqualink.send_shadow_desired(self.serial, {"equipment": {"swc_0": {aux: {"state": state}}}})
-        r.raise_for_status()
+        await self.shadow.update({"equipment": {"swc_0": {aux: {"state": state}}}})
     
     async def set_production(self, state) -> None:
-        r = await self.aqualink.send_shadow_desired(self.serial, {"equipment": {"swc_0": {"production": state}}})
-        r.raise_for_status()
+        await self.shadow.update({"equipment": {"swc_0": {"production": state}}})
     
     async def set_boost(self, state) -> None:
-        r = await self.aqualink.send_shadow_desired(self.serial, {"equipment": {"swc_0": {"boost": state}}})
-        r.raise_for_status()
+        await self.shadow.update({"equipment": {"swc_0": {"boost": state}}})
     
     async def set_low(self, state) -> None:
-        r = await self.aqualink.send_shadow_desired(self.serial, {"equipment": {"swc_0": {"low": state}}})
-        r.raise_for_status()
+        await self.shadow.update({"equipment": {"swc_0": {"low": state}}})
 
-class zs500Heater(AqualinkSystem):
-    def __init__(self, aqualink: AqualinkClient, data: Payload):
-        super().__init__(aqualink, data)
-
-        self.temp_unit = "C" #TODO: check if unit can be changed on panel?
-
-    async def update(self) -> None:
-        # Be nice to Aqualink servers since we rely on polling.
-        now = int(time.time())
-        delta = now - self.last_refresh
-        if delta < MIN_SECS_TO_REFRESH:
-            LOGGER.debug(f"Only {delta}s since last refresh.")
-            return
-
-        try:
-            r1 = await self.aqualink.send_shadow_request(self.serial)
-        # catch if a new AWS token is required
-        except AqualinkServiceUnauthorizedException:
-            try:
-                await self.aqualink.login()
-                r1 = await self.aqualink.send_shadow_request(self.serial)
-            except AqualinkServiceException:
-                self.online = None
-                raise
-        except AqualinkServiceException:
-            self.online = None
-            raise
-
-
-        try:
-            await self._parse_shadow_response(r1)
-        except AqualinkSystemOfflineException:
-            self.online = False
-            raise
+class zs500Heater(AWSSystem):
+    
+    def parse_shadow_response(self, data):
+        LOGGER.debug(f"Shadow response: {data}")
 
         self.online = True
         self.last_refresh = int(time.time())
-    
-    async def _parse_shadow_response(
-        self, response: aiohttp.ClientResponse
-    ) -> None:
-        data = await response.json()
-
-        LOGGER.debug(f"Shadow response: {data}")
 
         # Process the heater attributes
         # Make the data a bit flatter.
@@ -354,9 +297,7 @@ class zs500Heater(AqualinkSystem):
                 self.devices[k] = AqualinkDevice.from_data(self, v)
 
     async def set_heater(self, state) -> None:
-        r = await self.aqualink.send_shadow_desired(self.serial, {"equipment": {"hp_0": {"state": state}}})
-        r.raise_for_status()
+        await self.shadow.update({"equipment": {"hp_0": {"state": state}}})
 
     async def set_temps(self, sp) -> None:
-        r = await self.aqualink.send_shadow_desired(self.serial, {"equipment": {"hp_0": {"tsp": sp}}})
-        r.raise_for_status()
+        await self.shadow.update({"equipment": {"hp_0": {"tsp": sp}}})
