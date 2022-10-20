@@ -38,7 +38,12 @@ class Shadow:
         LOGGER.debug(f"Awaiting Response with token: {token}")
         # Event is concurrent not asynchronous so run it in the executor to not block the loop. 
         # There might be a better way to do this... But this async/concurrent hybrid is killing me and this works.
-        await asyncio.get_running_loop().run_in_executor(None, event.wait)
+        await asyncio.get_running_loop().run_in_executor(None, event.wait, 10)
+        if event.is_set():
+            LOGGER.debug(f"Event Set")
+        else:
+            LOGGER.debug(f"Event Timed-out...")
+
         
     async def update(self, payload):
         # Form the JSON String
@@ -54,20 +59,29 @@ class Shadow:
         # Wait for the call back to set the event
         LOGGER.debug(f"Awaiting Response with token: {token}")
         # Event is concurrent not asynchronous so run it in the executor to not block the loop. 
-        await asyncio.get_running_loop().run_in_executor(None, event.wait)
+        await asyncio.get_running_loop().run_in_executor(None, event.wait, 10)
+        if event.is_set():
+            LOGGER.debug(f"Event Set")
+        else:
+            LOGGER.debug(f"Event Timed-out...")
 
     def _parse_shadow_response(self, event, payload, responseStatus, token):
         LOGGER.debug(f"Reponse with Token: {token}")
-        # load the response JSON into a dictionary
-        payloadDict = json.loads(payload)
         # check the response status
         LOGGER.debug(f"Response Status: {responseStatus}")
+        try:
+            # load the response JSON into a dictionary
+            payloadDict = json.loads(payload)
+        except json.JSONDecodeError as e:
+            LOGGER.debug(f"Failed to load the payload {payload}")
+            payloadDict = {}
         if responseStatus == 'accepted':
             # hand off the rest of the parsing to the system for system specific unpacking
             self.system.parse_shadow_response(payloadDict)
         else:
             LOGGER.debug(f"Response: {payloadDict}")
         # set the event to flag response recieved
+        LOGGER.debug(f"Setting event...")
         event.set()
 
     def _parse_shadow_response_update(self, event, payload, responseStatus, token):
@@ -78,4 +92,5 @@ class Shadow:
         LOGGER.debug(f"Response Status: {responseStatus}")
         LOGGER.debug(f"Response: {payloadDict}")
         # set the event to flag response recieved
+        LOGGER.debug(f"Setting event...")
         event.set()
