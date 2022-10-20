@@ -26,6 +26,7 @@ from iaqualink.system import AqualinkSystem
 from iaqualink.typing import Payload
 
 from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTShadowClient
+from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
 
 AQUALINK_HTTP_HEADERS = {
     "user-agent": "okhttp/3.14.7",
@@ -226,7 +227,7 @@ class AqualinkClient:
         self.main_event_loop = asyncio.get_running_loop()
         
         # set up the MQTT shadow client
-        self.MQTTShadowClient = AWSIoTMQTTShadowClient(self._appClientId, useWebsocket=True)
+        self.MQTTShadowClient = AWSIoTMQTTClient(self._appClientId, useWebsocket=True)
         self.MQTTShadowClient.configureEndpoint(AQUALINK_AWSENDPOINT, AQUALINK_AWSMQTTPORT)
         self.MQTTShadowClient.configureCredentials(CERTPATH)
         self.MQTTShadowClient.configureIAMCredentials(self._access_key_id, self._secret_access_key, self._session_token)
