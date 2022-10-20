@@ -5,6 +5,8 @@ import threading
 
 import logging
 
+from AWSIoTPythonSDK.exception import AWSIoTExceptions
+
 LOGGER = logging.getLogger("iaqualink")
 
 # Configure logging
@@ -40,7 +42,12 @@ class Shadow:
         # request the shadow and register the callback
         #token = self.shadow_handler.shadowGet(callback_with_event, 10)
         topic = f"$aws/things/{self.system.serial}/shadow/get"
-        self.system.aqualink.MQTTShadowClient.publish(topic, "", 1)
+        try:
+            self.system.aqualink.MQTTShadowClient.publish(topic, "", 1)
+        except AWSIoTExceptions.publishTimeoutException as e:
+            LOGGER.error(f"Publish timeout... Try reconnect")
+            self.system.aqualink.MQTTSgadowClient.reinit_MQTT_client()
+            self.system.aqualink.MQTTSgadowClient.connect()
         
         LOGGER.debug(f"Awaiting event...")
         while self.getting:
