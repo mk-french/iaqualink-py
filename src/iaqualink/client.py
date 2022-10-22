@@ -253,9 +253,11 @@ class AqualinkClient:
         # Likely expired tokens, try get some new ones...
         self.reinit_MQTT_client()
 
-    def reinit_MQTT_client(self):
+    async def reinit_MQTT_client(self):
         LOGGER.debug(f"Getting new tokens!")
         # retrieve new tokens - login() is an async function so run it on the event loop, here we should be on a seperate loopless thread.
-        asyncio.run_coroutine_threadsafe(self.login(), self.main_event_loop).result()
+        #asyncio.run_coroutine_threadsafe(self.login(), self.main_event_loop).result()
+        await self.login()
         # update the tokens in the MQTT client
         self.MQTTShadowClient.configureIAMCredentials(self._access_key_id, self._secret_access_key, self._session_token)
+        #self.MQTTShadowClient.connect()
