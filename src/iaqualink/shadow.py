@@ -38,6 +38,10 @@ class Shadow:
             LOGGER.error("MQTTShadowClient has not been initialised")
 
     async def get(self):
+        if not self.system.online:
+            LOGGER.debug(f"Offline system detected. Trying to reinit client...")
+            await self.system.aqualink.reinit_MQTT_client()
+
         self.getting = True
         # request the shadow and register the callback
         #token = self.shadow_handler.shadowGet(callback_with_event, 10)
@@ -45,9 +49,10 @@ class Shadow:
         try:
             self.system.aqualink.MQTTShadowClient.publish(topic, "", 1)
         except AWSIoTExceptions.publishTimeoutException as e:
+            self.system.online = False
             LOGGER.error(f"Publish timeout... Try reconnect")
             await self.system.aqualink.reinit_MQTT_client()
-            self.system.aqualink.MQTTShadowClient.connect()
+            #self.system.aqualink.MQTTShadowClient.connect()
 
         LOGGER.debug(f"Awaiting event...")
         while self.getting:
