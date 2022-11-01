@@ -38,9 +38,9 @@ class Shadow:
             LOGGER.error("MQTTShadowClient has not been initialised")
 
     async def get(self):
-        if not self.system.online:
-            LOGGER.debug(f"Offline system detected. Trying to reinit client...")
-            await self.system.aqualink.reinit_MQTT_client()
+        #if not self.system.aqualink.online:
+        #    LOGGER.debug(f"Offline client detected. Trying to reinit client...")
+        #    await self.system.aqualink.reinit_MQTT_client()
 
         self.getting = True
         # request the shadow and register the callback

@@ -17,7 +17,7 @@ test_requirements = [
 
 setup(
     name="iaqualink",
-    version="0.6.2.dev7",
+    version="0.6.2.dev8",
     description="Asynchronous library for Jandy iAqualink",
     long_description=readme,
     long_description_content_type="text/markdown",
