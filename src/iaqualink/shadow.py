@@ -52,7 +52,6 @@ class Shadow:
             self.system.online = False
             LOGGER.error(f"Publish timeout... Try reconnect")
             await self.system.aqualink.reinit_MQTT_client()
-            #self.system.aqualink.MQTTShadowClient.connect()
 
         LOGGER.debug(f"Awaiting event...")
         while self.getting:

@@ -27,6 +27,7 @@ from iaqualink.typing import Payload
 
 from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTShadowClient
 from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
+from AWSIoTPythonSDK.exception import AWSIoTExceptions
 
 AQUALINK_HTTP_HEADERS = {
     "user-agent": "okhttp/3.14.7",
@@ -260,4 +261,10 @@ class AqualinkClient:
         await self.login()
         # update the tokens in the MQTT client
         self.MQTTShadowClient.configureIAMCredentials(self._access_key_id, self._secret_access_key, self._session_token)
-        #self.MQTTShadowClient.connect()
+        try:
+            self.MQTTShadowClient.connect()
+        except AWSIoTExceptions.connectTimeoutException:
+            LOGGER.debug(f"Failed to reconnect...")
+            return
+        LOGGER.debug(f"Reconnected!")
+        
