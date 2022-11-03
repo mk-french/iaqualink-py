@@ -32,15 +32,16 @@ class Shadow:
             topic = f"$aws/things/{self.system.serial}/shadow/update/accepted"
             LOGGER.debug(f"Subscribing to {topic}")
             self.system.aqualink.MQTTShadowClient.subscribe(topic, 1, self._callback_update_accepted)
+            self.system.online = True
             
         else:
             self.shadow_handler = None
             LOGGER.error("MQTTShadowClient has not been initialised")
 
     async def get(self):
-        #if not self.system.aqualink.online:
-        #    LOGGER.debug(f"Offline client detected. Trying to reinit client...")
-        #    await self.system.aqualink.reinit_MQTT_client()
+        if not self.system.online:
+            LOGGER.debug(f"Offline system detected. Trying to reinit client...")
+            await self.system.aqualink.reinit_MQTT_client()
 
         self.getting = True
         # request the shadow and register the callback
@@ -52,6 +53,7 @@ class Shadow:
             self.system.online = False
             LOGGER.error(f"Publish timeout... Try reconnect")
             await self.system.aqualink.reinit_MQTT_client()
+            return
 
         LOGGER.debug(f"Awaiting event...")
         while self.getting:

@@ -252,7 +252,7 @@ class AqualinkClient:
             MQTTSystem.online = False
 
         # Likely expired tokens, try get some new ones...
-        self.main_event_loop.call_soon_threadsafe(self.reinit_MQTT_client())
+        self.main_event_loop.call_soon_threadsafe(self.reinit_MQTT_client)
 
     async def reinit_MQTT_client(self):
         LOGGER.debug(f"Getting new tokens!")
