@@ -252,7 +252,7 @@ class AqualinkClient:
             MQTTSystem.online = False
 
         # Likely expired tokens, try get some new ones...
-        self.main_event_loop.call_soon_threadsafe(self.reinit_MQTT_client)
+        #self.main_event_loop.call_soon_threadsafe(self.reinit_MQTT_client)
 
     async def reinit_MQTT_client(self):
         LOGGER.debug(f"Getting new tokens!")
@@ -261,10 +261,10 @@ class AqualinkClient:
         await self.login()
         # update the tokens in the MQTT client
         self.MQTTShadowClient.configureIAMCredentials(self._access_key_id, self._secret_access_key, self._session_token)
-        try:
-            self.MQTTShadowClient.connect()
-        except AWSIoTExceptions.connectTimeoutException:
-            LOGGER.debug(f"Failed to reconnect...")
-            return
-        LOGGER.debug(f"Reconnected!")
+        #try:
+        #    self.MQTTShadowClient.connect()
+        #except AWSIoTExceptions.connectTimeoutException:
+        #    LOGGER.debug(f"Failed to reconnect...")
+        #    return
+        #LOGGER.debug(f"Reconnected!")
         

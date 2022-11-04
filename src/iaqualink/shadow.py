@@ -51,8 +51,8 @@ class Shadow:
             self.system.aqualink.MQTTShadowClient.publish(topic, "", 1)
         except AWSIoTExceptions.publishTimeoutException as e:
             self.system.online = False
-            LOGGER.error(f"Publish timeout... Try reconnect")
-            await self.system.aqualink.reinit_MQTT_client()
+            LOGGER.error(f"Publish timeout... Aborting")
+            #await self.system.aqualink.reinit_MQTT_client()
             return
 
         LOGGER.debug(f"Awaiting event...")
