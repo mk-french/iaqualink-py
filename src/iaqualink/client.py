@@ -215,18 +215,7 @@ class AqualinkClient:
         )
         return r
 
-    def init_MQTT_client(self, system):
-        
-        # Register the calling system for any future actions required (eg. disconnection flagging)
-        self.MQTTSystems.add(system)
-
-        # If a client already exists nothing to do
-        if self.MQTTShadowClient is not None:
-            return
-
-        # note the event loop so we can refer to it in threaded callbacks used by
-        self.main_event_loop = asyncio.get_running_loop()
-        
+    def init_MQTT_client(self):
         # set up the MQTT shadow client
         self.MQTTShadowClient = AWSIoTMQTTClient(self._appClientId, useWebsocket=True)
         self.MQTTShadowClient.configureEndpoint(AQUALINK_AWSENDPOINT, AQUALINK_AWSMQTTPORT)
@@ -255,16 +244,7 @@ class AqualinkClient:
         #self.main_event_loop.call_soon_threadsafe(self.reinit_MQTT_client)
 
     async def reinit_MQTT_client(self):
-        LOGGER.debug(f"Getting new tokens!")
-        # retrieve new tokens - login() is an async function so run it on the event loop, here we should be on a seperate loopless thread.
-        #asyncio.run_coroutine_threadsafe(self.login(), self.main_event_loop).result()
+        LOGGER.debug(f"Getting new tokens...")
         await self.login()
-        # update the tokens in the MQTT client
-        self.MQTTShadowClient.configureIAMCredentials(self._access_key_id, self._secret_access_key, self._session_token)
-        #try:
-        #    self.MQTTShadowClient.connect()
-        #except AWSIoTExceptions.connectTimeoutException:
-        #    LOGGER.debug(f"Failed to reconnect...")
-        #    return
-        #LOGGER.debug(f"Reconnected!")
-        
+        LOGGER.debug(f"Reinit MQTT Client...")
+        self.init_MQTT_client()

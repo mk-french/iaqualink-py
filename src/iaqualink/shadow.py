@@ -23,6 +23,9 @@ class Shadow:
         self.getting = False
         self.updating = False
         self.loop = asyncio.get_event_loop()
+        self.subscribe()
+    
+    def subscribe(self):
         if self.system.aqualink.MQTTShadowClient is not None:
             
             #self.shadow_handler = self.system.aqualink.MQTTShadowClient.createShadowHandlerWithName(self.system.serial, True)
@@ -42,6 +45,8 @@ class Shadow:
         if not self.system.online:
             LOGGER.debug(f"Offline system detected. Trying to reinit client...")
             await self.system.aqualink.reinit_MQTT_client()
+            LOGGER.debug(f"Re-subscribing to shadow topics...")
+            self.subscribe()
 
         self.getting = True
         # request the shadow and register the callback

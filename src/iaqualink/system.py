@@ -196,8 +196,11 @@ class AWSSystem(AqualinkSystem):
 
         self.temp_unit = "C" #TODO: check if unit can be changed on panel?
         
-        # Initialise the (possibly shared) MQTT Client with a reference back to this system
-        aqualink.init_MQTT_client(self)
+        # Register the calling system for any future actions required (eg. disconnection flagging)
+        aqualink.MQTTSystems.add(self)
+        # Initialise the MQTT Client if required
+        if aqualink.MQTTShadowClient is None:
+            aqualink.init_MQTT_client()
         # Create a shadow handler for this system with a reference back to this system
         self.shadow = Shadow(self)
 
