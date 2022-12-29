@@ -1,153 +1,68 @@
 name: CI
 
-on: [push]
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
 
 jobs:
-
-  isort:
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        python-version: [3.8]
-
-    steps:
-    - uses: actions/checkout@master
-    - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@master
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies (optional)
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Run isort
-      run: |
-        pip install isort
-        isort --check --diff src tests
-
-  black:
-    runs-on: ubuntu-latest
+  run:
+    runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
-        python-version: [3.8]
+        os: [ubuntu-latest]
+        python-version: ["3.8", "3.9", "3.10"]
 
     steps:
-    - uses: actions/checkout@master
-    - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@master
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies (optional)
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Run black
-      run: |
-        pip install black
-        black -l 80 --check src tests
+      - uses: actions/checkout@v2
 
-  flake8:
-    runs-on: ubuntu-latest
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v3
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    strategy:
-      matrix:
-        python-version: [3.8]
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip hatch
 
-    steps:
-    - uses: actions/checkout@master
-    - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@master
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies (optional)
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Run flake8
-      run: |
-        pip install flake8
-        flake8 src tests
+      - name: Check style
+        run: |
+          hatch run lint:style
 
-  mypy:
-    runs-on: ubuntu-latest
+      - name: Check typing
+        run: |
+          hatch run lint:typing
 
-    strategy:
-      matrix:
-        python-version: [3.8]
+      - name: Run unit tests
+        run: |
+          hatch run test-cov
 
-    steps:
-    - uses: actions/checkout@master
-    - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@master
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies (optional)
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Run mypy
-      run: |
-        pip install mypy
-        mypy --strict src
-
-  pytest:
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        python-version: [3.8, 3.9]
-
-    steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies (optional)
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Test with pytest
-      run: |
-        pip install pytest pytest-sugar pytest-icdiff
-        pytest
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    needs: [run]
 
     strategy:
       matrix:
-        python-version: [3.8]
-
-    env:
-      OS: ubuntu-latest
-      PYTHON: ${{ matrix.python-version }}
+        os: [ubuntu-latest]
+        python-version: ["3.8"]
 
     steps:
-    - uses: actions/checkout@master
-    - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@master
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies (optional)
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Generate coverage report
-      run: |
-        pip install pytest
-        pip install pytest-cov
-        pytest --cov=./ --cov-report=xml src tests
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v1
-      with:
-        files: ./coverage.xml
-        directory: ./coverage/reports/
-        flags: unittests
-        env_vars: OS,PYTHON
-        name: codecov-umbrella
-        fail_ci_if_error: false
-        path_to_write_report: ./coverage/codecov_report.txt
-        verbose: true
+      - uses: actions/checkout@v2
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          flags: full-suite

@@ -23,3 +23,11 @@ class AqualinkSystemOfflineException(AqualinkServiceException):
 
 class AqualinkSystemUnsupportedException(AqualinkServiceException):
     """Exception raised when a system isn't supported by the library."""
+
+
+class AqualinkOperationNotSupportedException(AqualinkException):
+    """Exception raised when trying to issue an unsupported operation."""
+
+
+class AqualinkDeviceNotSupported(AqualinkException):
+    """Exception raised when a device isn't known-unsupported."""
