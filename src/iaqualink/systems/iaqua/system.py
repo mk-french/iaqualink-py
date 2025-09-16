@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Optional
-
-import httpx
+from typing import TYPE_CHECKING
 
 from iaqualink.const import MIN_SECS_TO_REFRESH
 from iaqualink.exception import (
@@ -14,10 +12,12 @@ from iaqualink.exception import (
 )
 from iaqualink.system import AqualinkSystem
 from iaqualink.systems.iaqua.device import IaquaDevice
-from iaqualink.typing import Payload
 
 if TYPE_CHECKING:
+    import httpx
+
     from iaqualink.client import AqualinkClient
+    from iaqualink.typing import Payload
 
 IAQUA_SESSION_URL = "https://p-api.iaqualink.net/v1/mobile/session.json"
 
@@ -45,16 +45,17 @@ class IaquaSystem(AqualinkSystem):
         super().__init__(aqualink, data)
 
         self.temp_unit: str = ""
+        self.last_refresh: int = 0
 
     def __repr__(self) -> str:
         attrs = ["name", "serial", "data"]
-        attrs = ["%s=%r" % (i, getattr(self, i)) for i in attrs]
-        return f'{self.__class__.__name__}({" ".join(attrs)})'
+        attrs = [f"{i}={getattr(self, i)!r}" for i in attrs]
+        return f"{self.__class__.__name__}({' '.join(attrs)})"
 
     async def _send_session_request(
         self,
         command: str,
-        params: Optional[Payload] = None,
+        params: Payload | None = None,
     ) -> httpx.Response:
         if not params:
             params = {}
@@ -72,12 +73,10 @@ class IaquaSystem(AqualinkSystem):
         return await self.aqualink.send_request(url)
 
     async def _send_home_screen_request(self) -> httpx.Response:
-        r = await self._send_session_request(IAQUA_COMMAND_GET_HOME)
-        return r
+        return await self._send_session_request(IAQUA_COMMAND_GET_HOME)
 
     async def _send_devices_screen_request(self) -> httpx.Response:
-        r = await self._send_session_request(IAQUA_COMMAND_GET_DEVICES)
-        return r
+        return await self._send_session_request(IAQUA_COMMAND_GET_DEVICES)
 
     async def update(self) -> None:
         # Be nice to Aqualink servers since we rely on polling.
@@ -118,8 +117,8 @@ class IaquaSystem(AqualinkSystem):
         # Make the data a bit flatter.
         devices = {}
         for x in data["home_screen"][4:]:
-            name = list(x.keys())[0]
-            state = list(x.values())[0]
+            name = next(iter(x.keys()))
+            state = next(iter(x.values()))
             attrs = {"name": name, "state": state}
             devices.update({name: attrs})
 
@@ -131,7 +130,7 @@ class IaquaSystem(AqualinkSystem):
                 try:
                     self.devices[k] = IaquaDevice.from_data(self, v)
                 except AqualinkDeviceNotSupported as e:
-                    LOGGER.info("Device found was ignored: %s", e)
+                    LOGGER.debug("Device found was ignored: %s", e)
 
     def _parse_devices_response(self, response: httpx.Response) -> None:
         data = response.json()
@@ -145,9 +144,9 @@ class IaquaSystem(AqualinkSystem):
         # Make the data a bit flatter.
         devices = {}
         for x in data["devices_screen"][3:]:
-            aux = list(x.keys())[0]
+            aux = next(iter(x.keys()))
             attrs = {"aux": aux.replace("aux_", ""), "name": aux}
-            for y in list(x.values())[0]:
+            for y in next(iter(x.values())):
                 attrs.update(y)
             devices.update({aux: attrs})
 
@@ -166,7 +165,18 @@ class IaquaSystem(AqualinkSystem):
         self._parse_home_response(r)
 
     async def set_temps(self, temps: Payload) -> None:
-        r = await self._send_session_request(IAQUA_COMMAND_SET_TEMPS, temps)
+        # I'm not proud of this. If you read this, please submit a PR to make it better.
+        # We need to pass the temperatures for both pool and spa (if present) in the same request.
+        # Set args to current target temperatures and override with the request payload.
+        args = {}
+        i = 1
+        if "spa_set_point" in self.devices:
+            args[f"temp{i}"] = self.devices["spa_set_point"].target_temperature
+            i += 1
+        args[f"temp{i}"] = self.devices["pool_set_point"].target_temperature
+        args.update(temps)
+
+        r = await self._send_session_request(IAQUA_COMMAND_SET_TEMPS, args)
         self._parse_home_response(r)
 
     async def set_aux(self, aux: str) -> None:

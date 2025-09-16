@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import logging
-from types import TracebackType
-from typing import Any, Dict, Optional, Type
+from typing import TYPE_CHECKING, Any, Self
 
 import httpx
 
@@ -18,7 +18,10 @@ from iaqualink.exception import (
     AqualinkSystemUnsupportedException,
 )
 from iaqualink.system import AqualinkSystem
-from iaqualink.systems import *  # noqa: F401,F403
+from iaqualink.systems import *  # noqa: F403
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 AQUALINK_HTTP_HEADERS = {
     "user-agent": "okhttp/3.14.7",
@@ -33,13 +36,13 @@ class AqualinkClient:
         self,
         username: str,
         password: str,
-        httpx_client: Optional[httpx.AsyncClient] = None,
+        httpx_client: httpx.AsyncClient | None = None,
     ):
         self._username = username
         self._password = password
         self._logged = False
 
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
         if httpx_client is None:
             self._client = None
@@ -51,6 +54,7 @@ class AqualinkClient:
         self.client_id = ""
         self._token = ""
         self._user_id = ""
+        self.id_token = ""
 
         self._last_refresh = 0
 
@@ -67,26 +71,30 @@ class AqualinkClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self) -> AqualinkClient:
+    async def __aenter__(self) -> Self:
         try:
             await self.login()
-            return self
         except AqualinkServiceException:
             await self.close()
             raise
 
+        return self
+
     async def __aexit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc: Optional[BaseException],
-        tb: Optional[TracebackType],
-    ) -> Optional[bool]:
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool | None:
         # All Exceptions get re-raised.
         await self.close()
         return exc is None
 
     async def send_request(
-        self, url: str, method: str = "get", **kwargs: Any
+        self,
+        url: str,
+        method: str = "get",
+        **kwargs: Any,
     ) -> httpx.Response:
         if self._client is None:
             self._client = httpx.AsyncClient(
@@ -94,19 +102,20 @@ class AqualinkClient:
                 limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY),
             )
 
+        headers = AQUALINK_HTTP_HEADERS
+        headers.update(kwargs.pop("headers", {}))
+
         LOGGER.debug(f"-> {method.upper()} {url} {kwargs}")
-        r = await self._client.request(
-            method, url, headers=AQUALINK_HTTP_HEADERS, **kwargs
-        )
+        r = await self._client.request(method, url, headers=headers, **kwargs)
 
         LOGGER.debug(f"<- {r.status_code} {r.reason_phrase} - {url}")
 
-        if r.status_code == 401:
+        if r.status_code == httpx.codes.UNAUTHORIZED:
             m = "Unauthorized Access, check your credentials and try again"
             self._logged = False
             raise AqualinkServiceUnauthorizedException
 
-        if r.status_code != 200:
+        if r.status_code != httpx.codes.OK:
             m = f"Unexpected response: {r.status_code} {r.reason_phrase}"
             raise AqualinkServiceException(m)
 
@@ -129,6 +138,7 @@ class AqualinkClient:
         self.client_id = data["session_id"]
         self._token = data["authentication_token"]
         self._user_id = data["id"]
+        self.id_token = data["userPoolOAuth"]["IdToken"]
         self._logged = True
 
     async def _send_systems_request(self) -> httpx.Response:
@@ -141,7 +151,7 @@ class AqualinkClient:
         url = f"{AQUALINK_DEVICES_URL}?{params_str}"
         return await self.send_request(url)
 
-    async def get_systems(self) -> Dict[str, AqualinkSystem]:
+    async def get_systems(self) -> dict[str, AqualinkSystem]:
         try:
             r = await self._send_systems_request()
         except AqualinkServiceException as e:
@@ -153,9 +163,7 @@ class AqualinkClient:
 
         systems = []
         for x in data:
-            try:
+            with contextlib.suppress(AqualinkSystemUnsupportedException):
                 systems += [AqualinkSystem.from_data(self, x)]
-            except AqualinkSystemUnsupportedException:
-                pass
 
         return {x.serial: x for x in systems if x is not None}
